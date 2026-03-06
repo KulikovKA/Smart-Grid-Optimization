@@ -1,0 +1,190 @@
+@startuml Smart_Grid_Architecture
+!theme cerulean
+skinparam backgroundColor #FAFAFA
+skinparam packageStyle rectangle
+skinparam defaultTextAlignment center
+skinparam shadowing false
+skinparam roundCorner 10
+
+title **Smart Grid Optimization — Project Architecture & Data Flow**\n
+
+' ═══════════════════════════════════════════════
+' MODULES
+' ═══════════════════════════════════════════════
+
+package "Module: agents.py" as agents_pkg #E8F5E9 {
+    abstract class ElectricAppliance <<ABC>> {
+        + name: str
+        + nominal_power: float
+        + t0, t1: float
+        + {abstract} measure_consumption()
+    }
+
+    class EssentialAppliance {
+        Always on (fridge, router)
+        + measure_consumption()
+    }
+
+    class ScheduledAppliance {
+        Timed + shiftable
+        + can_shift: bool
+        + shifted_t0: float
+        + measure_consumption()
+        + try_shift(new_start_hour)
+    }
+
+    class PeakAppliance {
+        Bell-curve peak
+        + measure_consumption()
+    }
+
+    class TemperatureSensitiveAppliance {
+        Seasonal (heating/cooling)
+        + appliance_type: str
+        + measure_consumption()
+    }
+
+    class Battery {
+        + capacity, efficiency
+        + current_charge
+        + charge(amount)
+        + discharge(amount)
+    }
+
+    class HouseholdAgent {
+        + agent_id, household_type
+        + appliances: List
+        + measure_consumption()
+    }
+
+    class SmartHouseholdAgent {
+        + battery: Battery
+        + rng: RandomState
+        + optimize_step(hour, day_type,\n  season, price_forecast, real_price)
+        + reset()
+    }
+
+    class SmartGridAgent {
+        + agents: List[SmartHouseholdAgent]
+        + step(timestamp, day_type, season)
+        + get_total_consumption()
+    }
+
+    ElectricAppliance <|-- EssentialAppliance
+    ElectricAppliance <|-- ScheduledAppliance
+    ElectricAppliance <|-- PeakAppliance
+    ElectricAppliance <|-- TemperatureSensitiveAppliance
+
+    HouseholdAgent <|-- SmartHouseholdAgent
+    HouseholdAgent *-- "many" ElectricAppliance
+    SmartHouseholdAgent *-- "1" Battery
+    SmartGridAgent *-- "many" SmartHouseholdAgent
+}
+
+package "Module: utils.py" as utils_pkg #E3F2FD {
+    class Utils <<functions>> {
+        + set_seed(seed=42)
+        + asymmetric_profit_loss(y_true, y_pred)
+        + evaluate_and_plot_predictions(...)
+        + plot_training_history_with_lr(...)
+        + create_sequences(X, y, dates, seq_len, horizon)
+    }
+}
+
+' ═══════════════════════════════════════════════
+' NOTEBOOKS PIPELINE
+' ═══════════════════════════════════════════════
+
+package "Pipeline: Jupyter Notebooks" as nb_pkg #FFF3E0 {
+
+    rectangle "**01_data_generation.ipynb**\nSmartGridAgent → step() × 8760h\nEDA: weekly, seasonal, day profiles" as NB01 #FFE0B2
+
+    rectangle "**02_feature_engineering.ipynb**\nCyclical (sin/cos)\nLags, Diffs, Rolling stats\nEMA, Target Encoding" as NB02 #FFE0B2
+
+    rectangle "**03_classic_ml.ipynb**\nXGBoost, CatBoost (MultiRMSE),\nRandom Forest\n24-step ahead (direct)" as NB03 #FFCC80
+
+    rectangle "**04_classic_ml_optuna.ipynb**\nOptuna HPO (30 trials each)\nXGBoost, CatBoost, RF" as NB04 #FFCC80
+
+    rectangle "**05_gru.ipynb**\nGRU(128→64) + Dense\nCustom Loss + Nadam" as NB05 #FFB74D
+
+    rectangle "**06_lstm.ipynb**\nLSTM(128→64) + Dense\nCustom Loss + Nadam" as NB06 #FFB74D
+
+    rectangle "**07_hybrid.ipynb**\nCNN(64→128) + MaxPool\nLSTM(128→64) × 2\nMulti-Head Attention (8 heads)\nResidual + GlobalAvgPool" as NB07 #FF9800
+
+    rectangle "**08_simulation.ipynb**\nLoad all 9 models\nDynamic pricing (ToU)\nAgent-based 30-day tournament\nCompare savings %" as NB08 #F57C00
+}
+
+' ═══════════════════════════════════════════════
+' DATA ARTIFACTS
+' ═══════════════════════════════════════════════
+
+database "data/" as data_dir #E8EAF6 {
+    file "raw_data.csv" as raw_csv
+    file "features.csv" as feat_csv
+    file "*.png (16 plots)" as plots
+}
+
+database "model_weights/" as weights_dir #FCE4EC {
+    file "xgb_base.joblib\ncatboost_base.joblib\nrf_base.joblib" as w_classic
+    file "xgb_optuna.joblib\ncatboost_optuna.joblib\nrf_optuna.joblib" as w_optuna
+    file "gru_model.keras\nlstm_model.keras\nhybrid_model.keras" as w_dl
+    file "scaler_gru.joblib\nscaler_lstm.joblib\nscaler_hybrid.joblib" as w_scalers
+}
+
+' ═══════════════════════════════════════════════
+' DATA FLOW CONNECTIONS
+' ═══════════════════════════════════════════════
+
+agents_pkg -[#2E7D32,bold]-> NB01 : "import\nSmartGridAgent"
+NB01 -[#1565C0,bold]-> raw_csv : "saves\nraw_data.csv"
+raw_csv -[#1565C0,bold]-> NB02 : "reads"
+NB02 -[#1565C0,bold]-> feat_csv : "saves\nfeatures.csv"
+
+feat_csv -[#E65100,bold]--> NB03 : "reads"
+feat_csv -[#E65100,bold]--> NB04 : "reads"
+feat_csv -[#E65100,bold]--> NB05 : "reads"
+feat_csv -[#E65100,bold]--> NB06 : "reads"
+feat_csv -[#E65100,bold]--> NB07 : "reads"
+
+NB03 -[#C62828,bold]-> w_classic : "saves .joblib"
+NB04 -[#C62828,bold]-> w_optuna : "saves .joblib"
+NB05 -[#C62828,bold]-> w_dl : "saves .keras"
+NB06 -[#C62828,bold]-> w_dl : "saves .keras"
+NB07 -[#C62828,bold]-> w_dl : "saves .keras"
+NB05 -[#C62828]-> w_scalers : "saves scaler"
+NB06 -[#C62828]-> w_scalers : "saves scaler"
+NB07 -[#C62828]-> w_scalers : "saves scaler"
+
+w_classic -[#4A148C,bold]--> NB08 : "loads all\n6 joblib"
+w_dl -[#4A148C,bold]--> NB08 : "loads all\n3 keras"
+w_scalers -[#4A148C]--> NB08 : "loads scaler"
+feat_csv -[#E65100,bold]--> NB08 : "reads test data"
+agents_pkg -[#2E7D32,bold]-> NB08 : "import\nSmartHouseholdAgent"
+utils_pkg -[#0D47A1,bold]-> NB08 : "import set_seed,\nasymmetric_profit_loss,\ncreate_sequences"
+utils_pkg -[#0D47A1]-> NB05 : "import all utils"
+utils_pkg -[#0D47A1]-> NB06 : "import all utils"
+utils_pkg -[#0D47A1]-> NB07 : "import all utils"
+utils_pkg -[#0D47A1]-> NB03 : "import set_seed"
+
+NB01 -[#757575]-> plots : "saves EDA plots"
+NB03 -[#757575]-> plots : "saves metric plots"
+NB05 -[#757575]-> plots : "saves training plots"
+NB06 -[#757575]-> plots : "saves training plots"
+NB07 -[#757575]-> plots : "saves training plots"
+NB08 -[#757575]-> plots : "saves simulation plots"
+
+' ═══════════════════════════════════════════════
+' LEGEND
+' ═══════════════════════════════════════════════
+
+legend right
+  |= Color |= Meaning |
+  | <#2E7D32> | Python module import |
+  | <#1565C0> | Data flow (CSV) |
+  | <#E65100> | Feature data read |
+  | <#C62828> | Model weights save |
+  | <#4A148C> | Model weights load |
+  | <#757575> | Plot artifacts |
+end legend
+
+@enduml
