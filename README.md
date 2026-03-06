@@ -32,9 +32,10 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="data/uml_classes.svg">
     <source media="(prefers-color-scheme: light)" srcset="data/uml_classes.svg">
-    <img src="data/uml_classes.png" alt="Диаграмма классов" width="700">
+    <img src="data/uml1.png" alt="Диаграмма классов" width="700">
   </picture>
 </p>
+<p align="center"><a href="data/uml_classes.svg">Открыть SVG</a> · <a href="data/uml1.png">Открыть PNG</a></p>
 
 ### Поток данных (Data Flow)
 
@@ -42,9 +43,10 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="data/uml_dataflow.svg">
     <source media="(prefers-color-scheme: light)" srcset="data/uml_dataflow.svg">
-    <img src="data/uml_dataflow.png" alt="Поток данных" width="600">
+    <img src="data/uml2.png" alt="Поток данных" width="600">
   </picture>
 </p>
+<p align="center"><a href="data/uml_dataflow.svg">Открыть SVG</a> · <a href="data/uml2.png">Открыть PNG</a></p>
 
 ---
 
