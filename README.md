@@ -171,8 +171,3 @@ jupyter notebook 07_hybrid.ipynb
 jupyter notebook 08_simulation.ipynb
 ```
 
----
-
-## Лицензия
-
-MIT License
