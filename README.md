@@ -8,9 +8,9 @@
 
 Проект моделирует **умную электросеть** (Smart Grid), в которой:
 
-1. **Агентная модель** генерирует реалистичные данные энергопотребления для 141 потребителя (60 жилых, 80 коммерческих, 1 промышленный) за 365 дней (8760 часов).
+1. **Агентная модель** генерирует реалистичные данные энергопотребления для 141 потребителя (60 жилых, 80 коммерческих, 1 промышленный) и парка электромобилей (EV) за 365 дней (8760 часов).
 2. **ML-пайплайн** обучает **9 моделей** прогнозирования потребления на 24 часа вперёд.
-3. **Экономическая симуляция** сравнивает модели в турнире: агенты используют прогнозы для оптимизации нагрузки (Load Shifting + Battery Arbitrage) и экономии на динамических тарифах.
+3. **Экономическая симуляция** сравнивает модели в турнире: агенты используют прогнозы для оптимизации нагрузки (Load Shifting, Battery Arbitrage, V2G) и экономии на динамических тарифах.
 
 ### Ключевые технологии
 
@@ -20,7 +20,7 @@
 | **Гиперпараметрическая оптимизация** | Optuna (30 trials per model) |
 | **Нейросетевые модели** | GRU, LSTM, Hybrid (CNN + LSTM + Multi-Head Attention) |
 | **Custom Loss** | Асимметричная функция потерь (штраф 3:1 за недопрогноз) |
-| **Симуляция** | Мультиагентная система с динамическим тарифообразованием (ToU + congestion pricing) |
+| **Симуляция** | Мультиагентная система с динамическим тарифообразованием (ToU + congestion pricing) и V2G |
 
 ---
 
@@ -42,10 +42,10 @@
 
 ## Структура файлов
 
-```
+```text
 smart_grid/
-├── agents.py                      # Классы агентов и приборов (OOP)
-├── utils.py                       # Общие утилиты: loss, метрики, визуализация
+├── agents.py                      # Классы агентов, электромобилей и приборов (OOP)
+├── utils.py                       # Общие утилиты: loss, метрики, архитектура сетей
 │
 ├── 01_data_generation.ipynb       # Генерация данных агентной моделью + EDA
 ├── 02_feature_engineering.ipynb   # Feature engineering (лаги, sin/cos, EMA, TE)
@@ -55,7 +55,8 @@ smart_grid/
 ├── 06_lstm.ipynb                  # Модель LSTM с кастомным loss
 ├── 07_hybrid.ipynb                # Гибрид: CNN + LSTM + Multi-Head Attention
 ├── 08_simulation.ipynb            # Финальный турнир всех 9 моделей
-│
+├── src/
+│   ├── 07-hybrid.ipynb │          # Гибридная модель (kaggle)
 ├── data/
 │   ├── raw_data.csv               # Сырые данные (8760 часов)
 │   ├── features.csv               # Датасет с 60+ признаками
@@ -73,6 +74,7 @@ smart_grid/
     ├── gru_model.keras            # GRU
     ├── lstm_model.keras           # LSTM
     ├── hybrid_model.keras         # Hybrid CNN+LSTM+Attention
+    ├── y_scaler_hybrid.joblib     # Скейлер таргета
     └── scaler_*.joblib            # StandardScaler для каждой DL-модели
 ```
 
@@ -82,20 +84,22 @@ smart_grid/
 
 ### Sequence-to-Vector (без заглядывания в будущее)
 
-Для нейросетевых моделей используется подход **Sequence-to-Vector**: входное окно из 24 часов истории → прогноз на следующие 24 часа. Данные разделены **хронологически** (80/20), лаги рассчитаны строго с `shift(1)`, что исключает data leakage.
+Для нейросетевых моделей используется подход **Sequence-to-Vector**: входное окно из **168 часов истории (одна неделя)** → прогноз на следующие 24 часа. Данные разделены **хронологически** (80/20), лаги рассчитаны строго с `shift(1)`, что исключает data leakage.
 
 ### Архитектура Hybrid-модели (CNN + LSTM + Attention)
 
-```
-Input(24, N_features)
-  → Conv1D(64, k=5, swish) → BatchNorm
-  → Conv1D(128, k=3, swish) → BatchNorm
-  → MaxPool1D(2)
-  → LSTM(128, return_sequences) → LayerNorm
-  → LSTM(64, return_sequences) → LayerNorm
-  → Multi-Head Self-Attention (8 голов, key_dim=64) + Residual + LayerNorm
-  → GlobalAveragePooling1D
-  → Dense(128, swish) → Dense(64, swish)
+Модель, обученная на Kaggle, сочетает сверточные слои для извлечения локальных паттернов, рекуррентные для выявления долгосрочных зависимостей и механизм внимания:
+
+```text
+Input(168, N_features)
+  → Conv1D(64, k=3, stride=2, mish) → BatchNorm → SpatialDropout1D(0.2)
+  → Conv1D(128, k=3, stride=1, mish) → MaxPooling1D(2)
+  → LSTM(128, return_sequences, dropout=0.2)
+  → MultiHeadAttention (8 голов, 32 dim) + Residual + LayerNorm
+  → GlobalAveragePooling1D & GlobalMaxPooling1D
+  → Concatenate с Dense(32, mish) из последнего временного шага
+  → Dense(256, mish) → Dropout(0.3) 
+  → Dense(128, mish)
   → Dense(24, linear) — Output: прогноз на 24 часа
 ```
 
@@ -123,10 +127,11 @@ def asymmetric_profit_loss(y_true, y_pred):
 
 ## Экономическая симуляция
 
-Агенты (`SmartHouseholdAgent`) используют прогнозы моделей для оптимизации:
+Агенты (`SmartHouseholdAgent`) используют прогнозы моделей для комплексной оптимизации потребления:
 
-1. **Load Shifting** — сдвиг гибких нагрузок (стиральная машина, посудомоечная, зарядка EV) на дешёвые часы.
-2. **Battery Arbitrage** — зарядка аккумулятора в ночной тариф, разрядка в пиковый.
+1. **Load Shifting** — сдвиг гибких нагрузок (стиральная машина, посудомоечная и т.д.) на дешёвые часы.
+2. **Battery Arbitrage** — зарядка домашних аккумуляторов в ночной тариф, разрядка в пиковый.
+3. **Smart EV Charging & V2G (Vehicle-to-Grid)** — Умная зарядка парка электромобилей (поддерживается 12 реальных моделей: Tesla, VW, NIO, BYD, XPeng и др.). Автомобили агрессивно заряжаются при низких ценах и отдают энергию обратно в сеть (разряжаются) во время пиковых нагрузок для стабилизации сети.
 
 Тарифообразование — **динамическое**: base rate × time-of-use (день/ночь) × load factor.
 
@@ -170,4 +175,3 @@ jupyter notebook 07_hybrid.ipynb
 # 4. Финальная симуляция
 jupyter notebook 08_simulation.ipynb
 ```
-
