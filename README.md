@@ -173,7 +173,7 @@ def asymmetric_profit_loss(y_true, y_pred):
 | **GRU (Custom Loss)** | 119 488.48 | 167 063.73 | 3.49% | 0.9712 |
 | **XGBoost (Base)** | 120 473.09 | 166 709.95 | 3.44% | 0.9711 |
 | **Random Forest (Base)** | 134 436.90 | 176 996.81 | 3.78% | 0.9675 |
-| **Hybrid (CNN+LSTM+Attn)** | — | — | **2.16%** | 0.9639 |
+| **Hybrid (CNN+LSTM+Attention)** | 134 597,16 | 176 389,16 | **2.16%** | 0.9639 |
 | **CatBoost (Base)** | 139 597.68 | 189 388.39 | 3.97% | 0.9628 |
 | **LSTM (Custom Loss)** | 129 264.49 | 203 418.00 | 3.68% | 0.9573 |
 
